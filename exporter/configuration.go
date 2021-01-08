@@ -10,3 +10,14 @@ func EnvString(key string, fallback string) string {
 	}
 	return fallback
 }
+
+type ExporterConfig struct {
+	cloudflareEmail          string
+	cloudflareKey            string
+	cloudflareToken          string
+	cloudflareUserServiceKey string
+	cloudflareZones          string
+	cloudflareAccounts       string
+	cloudflareSince          string
+	cloudflareIncludeAccess  bool
+}

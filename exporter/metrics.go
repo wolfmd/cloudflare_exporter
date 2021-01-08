@@ -11,9 +11,11 @@ import (
 )
 
 type CloudflareMetrics struct {
-	api   *cloudflare.API
-	zones []string
-	since string
+	api           *cloudflare.API
+	zones         []string
+	accounts      []string
+	since         string
+	includeAccess bool
 
 	counters   map[string]*prometheus.CounterVec
 	gauges     map[string]*prometheus.GaugeVec
@@ -22,73 +24,100 @@ type CloudflareMetrics struct {
 }
 
 var (
-	errNoCloudflareAuth  = errors.New("no Cloudflare authentication method provided")
-	errNoCloudflareZones = errors.New("no Cloudflare zones provided")
+	errNoCloudflareAuth     = errors.New("no Cloudflare authentication method provided")
+	errNoCloudflareZones    = errors.New("no Cloudflare zones provided, please set CLOUDFLARE_ZONES or pass in --cloudflare.zones")
+	errNoCloudflareAccounts = errors.New("no Cloudflare accounts provided, needed in order to display access-related metrics, please set CLOUDFLARE_ACCOUNTS or pass in --cloudflare.accounts")
 )
 
-func New(cloudflareEmail string, cloudflareKey string, cloudflareApiToken string, cloudflareUserServiceKey string, cloudflareZones string, cloudflareSince string) (*CloudflareMetrics, error) {
-	if cloudflareZones == "" {
+func New(config ExporterConfig) (*CloudflareMetrics, error) {
+	if config.cloudflareZones == "" {
 		return nil, errNoCloudflareZones
 	}
 
-	if cloudflareEmail != "" && cloudflareKey != "" {
-		return newWithEmailAuth(cloudflareEmail, cloudflareKey, cloudflareZones, cloudflareSince)
+	if config.cloudflareIncludeAccess == true && config.cloudflareAccounts == "" {
+		return nil, errNoCloudflareAccounts
 	}
 
-	if cloudflareApiToken != "" {
-		return newWithTokenAuth(cloudflareApiToken, cloudflareZones, cloudflareSince)
+	if config.cloudflareEmail != "" && config.cloudflareKey != "" {
+		return newWithEmailAuth(config)
 	}
 
-	if cloudflareUserServiceKey != "" {
-		return newWithUserServiceKeyAuth(cloudflareUserServiceKey, cloudflareZones, cloudflareSince)
+	if config.cloudflareToken != "" {
+		return newWithTokenAuth(config)
+	}
+
+	if config.cloudflareUserServiceKey != "" {
+		return newWithUserServiceKeyAuth(config)
 	}
 
 	return nil, errNoCloudflareAuth
 }
 
-func newWithEmailAuth(cloudflareEmail string, cloudflareKey string, cloudflareZones string, cloudflareSince string) (*CloudflareMetrics, error) {
-	cloudflareApi, err := cloudflare.New(cloudflareKey, cloudflareEmail)
+func newWithEmailAuth(config ExporterConfig) (*CloudflareMetrics, error) {
+	cloudflareApi, err := cloudflare.New(config.cloudflareKey, config.cloudflareEmail)
 	if err != nil {
 		return nil, err
 	}
 
-	return newWithAPI(cloudflareApi, cloudflareZones, cloudflareSince), nil
+	return newWithAPI(cloudflareApi, config), nil
 }
 
-func newWithTokenAuth(cloudflareApiToken string, cloudflareZones string, cloudflareSince string) (*CloudflareMetrics, error) {
-	cloudflareApi, err := cloudflare.NewWithAPIToken(cloudflareApiToken)
+func newWithTokenAuth(config ExporterConfig) (*CloudflareMetrics, error) {
+	cloudflareApi, err := cloudflare.NewWithAPIToken(config.cloudflareToken)
 	if err != nil {
 		return nil, err
 	}
 
-	return newWithAPI(cloudflareApi, cloudflareZones, cloudflareSince), nil
+	return newWithAPI(cloudflareApi, config), nil
 }
 
-func newWithUserServiceKeyAuth(cloudflareUserServiceKey string, cloudflareZones string, cloudflareSince string) (*CloudflareMetrics, error) {
-	cloudflareApi, err := cloudflare.NewWithUserServiceKey(cloudflareUserServiceKey)
+func newWithUserServiceKeyAuth(config ExporterConfig) (*CloudflareMetrics, error) {
+	cloudflareApi, err := cloudflare.NewWithUserServiceKey(config.cloudflareUserServiceKey)
 	if err != nil {
 		return nil, err
 	}
 
-	return newWithAPI(cloudflareApi, cloudflareZones, cloudflareSince), nil
+	return newWithAPI(cloudflareApi, config), nil
 }
 
-func newWithAPI(cloudflareApi *cloudflare.API, cloudflareZones string, cloudflareSince string) *CloudflareMetrics {
+func newWithAPI(cloudflareApi *cloudflare.API, config ExporterConfig) *CloudflareMetrics {
 	return &CloudflareMetrics{
-		api:        cloudflareApi,
-		zones:      strings.Split(strings.ReplaceAll(cloudflareZones, " ", ""), ","),
-		since:      cloudflareSince,
-		counters:   map[string]*prometheus.CounterVec{},
-		gauges:     map[string]*prometheus.GaugeVec{},
-		histograms: map[string]*prometheus.HistogramVec{},
-		summaries:  map[string]*prometheus.SummaryVec{},
+		api:           cloudflareApi,
+		zones:         strings.Split(strings.ReplaceAll(config.cloudflareZones, " ", ""), ","),
+		accounts:      strings.Split(strings.ReplaceAll(config.cloudflareAccounts, " ", ""), ","),
+		since:         config.cloudflareSince,
+		includeAccess: config.cloudflareIncludeAccess,
+		counters:      map[string]*prometheus.CounterVec{},
+		gauges:        map[string]*prometheus.GaugeVec{},
+		histograms:    map[string]*prometheus.HistogramVec{},
+		summaries:     map[string]*prometheus.SummaryVec{},
 	}
 }
 
 func (cm *CloudflareMetrics) update() {
+	if cm.includeAccess == true {
+		for _, account := range cm.accounts {
+			cm.updateAccount(account)
+		}
+	}
 	for _, zone := range cm.zones {
 		cm.updateZone(zone)
 	}
+}
+
+func (cm *CloudflareMetrics) updateAccount(accountId string) {
+	serviceTokenExpirationMap := make(map[string]int64)
+
+	accessServiceTokens, _, err := cm.api.AccessServiceTokens(accountId)
+	if err != nil {
+		log.Printf("cloudflare.API.AccessServiceTokens(%v): %v\n", accountId, err)
+		return
+	}
+	for _, data := range accessServiceTokens {
+		serviceTokenExpirationMap[data.Name] = data.ExpiresAt.Unix()
+	}
+
+	cm.updateAccountGaugeByLabel(accountId, "access_service_token_expiration", "The current unix timestamp at which a service token expires", "token_name", serviceTokenExpirationMap)
 }
 
 func (cm *CloudflareMetrics) updateZone(zoneName string) {
@@ -148,6 +177,15 @@ func (cm *CloudflareMetrics) updateZoneGauge(zoneId string, zoneName string, nam
 
 func (cm *CloudflareMetrics) updateZoneGaugeByLabel(zoneId string, zoneName string, name string, help string, byLabel string, values map[string]int) {
 	labels := prometheus.Labels{"zone_id": zoneId, "zone_name": zoneName, byLabel: ""}
+	cm.createGaugeIfNotExists(name, help, labels)
+	for key, value := range values {
+		labels[byLabel] = key
+		cm.gauges[name].With(labels).Set(float64(value))
+	}
+}
+
+func (cm *CloudflareMetrics) updateAccountGaugeByLabel(accountId string, name string, help string, byLabel string, values map[string]int64) {
+	labels := prometheus.Labels{"account_id": accountId, byLabel: ""}
 	cm.createGaugeIfNotExists(name, help, labels)
 	for key, value := range values {
 		labels[byLabel] = key

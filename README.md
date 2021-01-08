@@ -14,14 +14,16 @@ This piece of software has one mission: gather Cloudflare Site analytics from th
 
 ### Considerations
 
-* **Tune your configuration**. All configuration is done through *environment variables*:
+* **Tune your configuration**. Can configuration is done through *environment variables* and optionally, command-line flags:
   * `CLOUDFLARE_EMAIL`: *(optional)* email used for Cloudflare API email authentication
   * `CLOUDFLARE_KEY`: *(optional)* key used for Cloudflare API email authentication
   * `CLOUDFLARE_TOKEN`: *(optional)* token used for Cloudflare API token authentication
   * `CLOUDFLARE_USER_SERVICE_KEY`: *(optional)* key used for Cloudflare API user service key authentication
-  * `CLOUDFLARE_ZONES`: *(required)* comma-separated list of zone names to scrape for metrics (e.g. `example.com,example.org`)
-  * `CLOUDFLARE_SCRAPE_ANALYTICS_SINCE`: *(default: `24h`)* `since` parameter of calls to the Cloudflare Analytics API
-  * `EXPORTER_LISTEN_ADDR`: *(default: `127.0.0.1:9199`)* address for the exporter to bind to
+  * `--cloudflare.zones`, `CLOUDFLARE_ZONES`: *(required)* comma-separated list of zone names to scrape for metrics (e.g. `example.com,example.org`)
+  * `--cloudflare.accounts`, `CLOUDFLARE_ACCOUNTS`: *(optional)* comma-separated list of account ids to scrape for metrics (e.g. `123548648,123548644868`)
+  * `--cloudflare.since`, `CLOUDFLARE_SCRAPE_ANALYTICS_SINCE`: *(default: `24h`)* `since` parameter of calls to the Cloudflare Analytics API
+  * `--cloudflare.include-access`: *(optional)* bool to enable Cloudflare Access-related metrics
+  * `--web.listen-addr`, `EXPORTER_LISTEN_ADDR`: *(default: `127.0.0.1:9199`)* address for the exporter to bind to
 * **Beware of rate limiting**, Cloudflare's API has a base limit of [1200 requests every 5 minutes](https://support.cloudflare.com/hc/en-us/articles/200171456-How-many-API-calls-can-I-make-). I recommend configuring your [Prometheis](https://prometheus.io/docs/introduction/faq/#what-is-the-plural-of-prometheus) to scrape `cloudflare_exporter` once every 1-5 minutes.
 
 ### With the prebuilt container image
